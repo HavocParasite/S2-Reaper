@@ -8,9 +8,7 @@ python autopwn.py
 
 ## About
 
-This project including two parts. First is `autopwn.py` , which will run a google search crawler with keywords definded at `crawler.conf` to find vulnerable URLs. Second is `exploit.py` , witch will run exploit on those URLS recorded by `autopwn.py`.
-
-I will integrate these two parts together later.
+The `autopwn.py` will run a google search crawler with keywords definded at `crawler.conf` to find vulnerable URLs.
 
 ### `crawler.conf`
 
@@ -20,11 +18,21 @@ I will integrate these two parts together later.
 
 `expect_num` : expect search results to be crawlered
 
-`http/socks5 proxy` : set a proxy for the crawler
+`http/socks` : set a HTTP/SOCKS5 proxy for the crawler
 
-### `cmd.txt`
+## Dependence
 
-After `autopwn.py` have recorded all vulnerable URLs in `vulnerable.txt`, you can set commands that you want to run on remote hosts in `cmd.txt`. Each line will be an independent command to execute. Finally, run `python exploit.py` and have fun!
+You need to run the following command to install requirements.
+
+```
+pip install beautifulsoup4 requests
+```
+
+If you want to use a SOCKS5 proxy, then install requests[socks] with pip.
+
+```
+pip install requests[socks]
+```
 
 ## Reference
 
