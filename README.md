@@ -1,14 +1,16 @@
-# Struts2-AutoPwn
+# S2-Reaper
+
+This project is used to collect vulnerable URLs that affected by Struts2 S2-045 from the Google search results.
 
 ## Usage
 
 ```
-python autopwn.py
+python reaper.py
 ```
 
 ## About
 
-The `autopwn.py` will run a google search crawler with keywords definded at `crawler.conf` to find vulnerable URLs.
+The `reaper.py` will run a google search crawler with keywords definded at `crawler.conf` to find vulnerable URLs.
 
 ### `crawler.conf`
 
